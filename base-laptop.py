@@ -8,10 +8,18 @@ import time
 import threading
 from queue import Queue
 
+# Configuration
 AUTHORIZED_FACES_DIR = "authorized_faces"
+CAMERA_URL = "http://192.168.11.102:8080/shot.jpg"
+ESP32_URL = "http://192.168.11.102:80/update"  
+DISPLAY_WIDTH = 800
+FACE_PROCESS_SCALE = 0.4
+FACE_PROCESS_INTERVAL = 3
 
 known_face_encodings = []
 known_face_names = []
+PREVIOUS_ACCESS_GRANTED = None
+SESSION = requests.Session()
 
 if not os.path.exists(AUTHORIZED_FACES_DIR):
     print(f"Error: Directory '{AUTHORIZED_FACES_DIR}' not found. Create it and add seeleal13.jpg.")
@@ -31,17 +39,6 @@ else:
     print(f"Error: No face found in seeleal13.jpg.")
     exit()
 
-# my ip virtual cam url
-url = "http://192.168.11.101:8080/shot.jpg"
-DISPLAY_WIDTH = 800
-FACE_PROCESS_SCALE = 0.4
-FACE_PROCESS_INTERVAL = 3
-
-# esp32 config
-ESP32_URL = "http://192.168.11.102:80/update"
-PREVIOUS_ACCESS_GRANTED = None
-SESSION = request.Session()
-
 def send_to_esp32(status, details):
 
     payload = {
@@ -58,7 +55,6 @@ def send_to_esp32(status, details):
     except Exception as e:
         print(f"Error sending to ESP32: {e}")
 
-
 class SharedData:
     def __init__(self):
         self.lock = threading.Lock()
@@ -72,21 +68,18 @@ shared = SharedData()
 running = True
 
 def frame_fetcher():
-
     global running
     session = requests.Session()
     session.headers.update({'Connection': 'keep-alive'})
     
     while running:
         try:
-
-            response = session.get(url, timeout=1, stream=True)
+            response = session.get(CAMERA_URL, timeout=1, stream=True)
             if response.status_code == 200:
                 img_arr = np.array(bytearray(response.content), dtype=np.uint8)
                 frame = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
                 
                 if frame is not None:
-
                     frame = imutils.resize(frame, width=DISPLAY_WIDTH)
                     
                     with shared.lock:
@@ -97,7 +90,6 @@ def frame_fetcher():
             time.sleep(0.05)
 
 def face_processor():
-
     global running
     frame_counter = 0
     
@@ -111,14 +103,11 @@ def face_processor():
         if current_frame is not None:
             frame_counter += 1
             
-
             if frame_counter % FACE_PROCESS_INTERVAL == 0:
                 try:
-
                     small_frame = cv2.resize(current_frame, (0, 0), fx=FACE_PROCESS_SCALE, fy=FACE_PROCESS_SCALE)
                     rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
                     
-
                     face_locations = face_recognition.face_locations(rgb_small_frame, model="hog")
                     
                     if face_locations: 
@@ -140,7 +129,6 @@ def face_processor():
                             
                             face_names.append(name)
                         
-
                         scaled_locations = []
                         scale_factor = 1.0 / FACE_PROCESS_SCALE
                         for (top, right, bottom, left) in face_locations:
@@ -158,7 +146,6 @@ def face_processor():
                             shared.last_face_process_time = time.time()
                     
                     else:
-
                         with shared.lock:
                             shared.face_locations = []
                             shared.face_names = []
@@ -183,7 +170,6 @@ try:
     while True:
         display_frame = None
         
-
         with shared.lock:
             if shared.latest_frame is not None:
                 display_frame = shared.latest_frame.copy()
@@ -196,7 +182,6 @@ try:
             frame_count += 1
             current_time = time.time()
             
-
             if current_time - fps_update_time >= 1.0:
                 fps = frame_count / (current_time - fps_update_time)
                 frame_count = 0
@@ -204,7 +189,6 @@ try:
             else:
                 fps = frame_count / max(current_time - start_time, 0.001)
             
-
             for (top, right, bottom, left), name in zip(current_locations, current_names):
                 color = (0, 255, 0) if name == "Seeleal13" else (0, 0, 255)
                 cv2.rectangle(display_frame, (left, top), (right, bottom), color, 2)
@@ -212,7 +196,6 @@ try:
                 cv2.putText(display_frame, name, (left + 6, bottom - 6), 
                            cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
             
-
             access_text = "Access Granted" if access_granted else "Access Denied"
             access_color = (0, 255, 0) if access_granted else (0, 0, 255)
             
@@ -221,15 +204,13 @@ try:
             cv2.putText(display_frame, f"FPS: {fps:.1f}", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             
-
             process_age = current_time - last_process_time
             status_color = (0, 255, 0) if process_age < 1.0 else (0, 255, 255)
             cv2.putText(display_frame, f"Face Check: {process_age:.1f}s ago", (10, 55), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1)
             
             cv2.imshow('AURA - Smooth Feed', display_frame)
-
-            global PREVIOUS_ACCESS_GRANTED
+            
             if access_granted != PREVIOUS_ACCESS_GRANTED:
                 status = "granted" if access_granted else "denied"
                 details = {
@@ -239,7 +220,6 @@ try:
                 threading.Thread(target=send_to_esp32, args=(status, details), daemon=True).start()
                 PREVIOUS_ACCESS_GRANTED = access_granted
         
-
         if cv2.waitKey(1) & 0xFF == 27:  # Esc key
             break
 
