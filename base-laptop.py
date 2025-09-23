@@ -37,6 +37,27 @@ DISPLAY_WIDTH = 800
 FACE_PROCESS_SCALE = 0.4
 FACE_PROCESS_INTERVAL = 3
 
+# esp32 config
+ESP32_URL = "http://192.168.11.102:80/update"
+PREVIOUS_ACCESS_GRANTED = None
+SESSION = request.Session()
+
+def send_to_esp32(status, details):
+
+    payload = {
+        "status": status,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "details": details
+    }
+    try:
+        response = SESSION.post(ESP32_URL, json=payload, timeout=2)
+        if response.status_code == 200:
+            print(f"Sent to ESP32: {payload} - Response: {response.text}")
+        else:
+            print(f"Failed to send to ESP32: Status {response.status_code}")
+    except Exception as e:
+        print(f"Error sending to ESP32: {e}")
+
 
 class SharedData:
     def __init__(self):
@@ -72,7 +93,7 @@ def frame_fetcher():
                         shared.latest_frame = frame
                         
         except Exception as e:
-
+            print(f"Frame fetcher error: {e}")
             time.sleep(0.05)
 
 def face_processor():
@@ -145,14 +166,13 @@ def face_processor():
                             shared.last_face_process_time = time.time()
                 
                 except Exception as e:
-                    pass
+                    print(f"Face processor error: {e}")
         
         time.sleep(0.01)
 
 threading.Thread(target=frame_fetcher, daemon=True).start()
 threading.Thread(target=face_processor, daemon=True).start()
 
-print("Strating AURA smoothly ;) ...")
 print("Press Esc to exit")
 
 start_time = time.time()
@@ -208,6 +228,16 @@ try:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1)
             
             cv2.imshow('AURA - Smooth Feed', display_frame)
+
+            global PREVIOUS_ACCESS_GRANTED
+            if access_granted != PREVIOUS_ACCESS_GRANTED:
+                status = "granted" if access_granted else "denied"
+                details = {
+                    "detected_faces": current_names,
+                    "fps": f"{fps:.1f}"
+                }
+                threading.Thread(target=send_to_esp32, args=(status, details), daemon=True).start()
+                PREVIOUS_ACCESS_GRANTED = access_granted
         
 
         if cv2.waitKey(1) & 0xFF == 27:  # Esc key
